@@ -99,7 +99,7 @@ def diagnostic_table_one_seed(log, E, buffer_size, last_k_for_margin, random_see
 
     # Per-sample reporting metrics. Mean target confidence is computed over the
     # same first-E-epoch window as the selection / as Figure 3 (b.1).
-    margin_late = log['diag_margin'][-last_k_for_margin:].mean(dim=0).numpy()
+    margin_late = log['diag_margin'][:last_k_for_margin].mean(dim=0).numpy()
     forgetting = forgetting_events(log['diag_correct'])
     mean_conf_report = mean_conf_E  # = target_conf_all[:E].mean(dim=0).numpy()
 
