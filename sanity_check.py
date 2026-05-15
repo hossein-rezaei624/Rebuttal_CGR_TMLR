@@ -1,5 +1,5 @@
 import torch
-d = torch.load('cgr_diag_logs/cgr_diag_seed0.pt')
+d = torch.load('cgr_diag_logs/cgr_diag_seed0.pt', weights_only=False)
 print({k: (v.shape, v.dtype) if torch.is_tensor(v) else v for k, v in d.items()})
 print('cgr_conf range:', d['cgr_confidence_by_sample'].min().item(),
       d['cgr_confidence_by_sample'].max().item())
