@@ -29,7 +29,7 @@ def load_seed_logs(diag_dir):
     paths = sorted(Path(diag_dir).glob('cgr_diag_seed*.pt'))
     if not paths:
         raise FileNotFoundError(f"No 'cgr_diag_seed*.pt' files found in {diag_dir}")
-    return [torch.load(p, map_location='cpu') for p in paths]
+    return [torch.load(p, map_location='cpu', weights_only=False) for p in paths]
 
 
 # ------------------------- Metrics ---------------------------
