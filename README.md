@@ -14,7 +14,7 @@ python utils/main.py --model cgr --load_best_args --dataset seq-cifar100 --buffe
 ```
 
 ```shell
-python analyze_cgr_diag.py --diag_dir cgr_diag_logs --E 4 --buffer_size 1000 --last_k_for_margin 5
+python analyze_cgr_diag.py --diag_dir cgr_diag_logs --E 4 --buffer_size 1000
 ```
 
 ```shell
