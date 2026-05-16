@@ -29,7 +29,7 @@ def load_seed_logs(diag_dir):
     paths = sorted(Path(diag_dir).glob('cgr_diag_seed*.pt'))
     if not paths:
         raise FileNotFoundError(f"No 'cgr_diag_seed*.pt' files found in {diag_dir}")
-    return [torch.load(p, map_location='cpu', weights_only=False) for p in paths]
+    return [torch.load(p, map_location='cpu') for p in paths]
 
 
 # ------------------------- Metrics ---------------------------
@@ -99,7 +99,7 @@ def diagnostic_table_one_seed(log, E, buffer_size, last_k_for_margin, random_see
 
     # Per-sample reporting metrics. Mean target confidence is computed over the
     # same first-E-epoch window as the selection / as Figure 3 (b.1).
-    margin_late = log['diag_margin'][:last_k_for_margin].mean(dim=0).numpy()
+    margin_late = log['diag_margin'][-last_k_for_margin:].mean(dim=0).numpy()
     forgetting = forgetting_events(log['diag_correct'])
     mean_conf_report = mean_conf_E  # = target_conf_all[:E].mean(dim=0).numpy()
 
@@ -120,15 +120,16 @@ def diagnostic_table_one_seed(log, E, buffer_size, last_k_for_margin, random_see
 
     rng = np.random.default_rng(random_seed)
     rules = {
-        'Random':         np.concatenate([
-                              rng.choice(np.where(labels == c)[0],
-                                         size=min(k_per_class, (labels == c).sum()),
-                                         replace=False)
-                              for c in unique_classes
-                          ]),
-        'High loss':      top_k_per_class(mean_loss_E, descending=True),
-        'Low confidence': top_k_per_class(mean_conf_E, descending=False),
-        'CGR (variance)': top_k_per_class(variance, descending=True),
+        'Random':          np.concatenate([
+                               rng.choice(np.where(labels == c)[0],
+                                          size=min(k_per_class, (labels == c).sum()),
+                                          replace=False)
+                               for c in unique_classes
+                           ]),
+        'High loss':       top_k_per_class(mean_loss_E, descending=True),
+        'High confidence': top_k_per_class(mean_conf_E, descending=True),
+        'Low confidence':  top_k_per_class(mean_conf_E, descending=False),
+        'CGR (variance)':  top_k_per_class(variance, descending=True),
     }
 
     row_dict = {}
