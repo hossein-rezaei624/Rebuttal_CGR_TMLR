@@ -29,7 +29,7 @@ def load_seed_logs(diag_dir):
     paths = sorted(Path(diag_dir).glob('cgr_diag_seed*.pt'))
     if not paths:
         raise FileNotFoundError(f"No 'cgr_diag_seed*.pt' files found in {diag_dir}")
-    return [torch.load(p, map_location='cpu', weights_only=False) for p in paths]
+    return [torch.load(p, map_location='cpu') for p in paths]
 
 
 # ------------------------- Metrics ---------------------------
@@ -82,24 +82,26 @@ def variance_vs_forgetting_per_seed(logs, E):
 
 # ---------------- (b.2) Diagnostic table (all seeds) ----------------------
 
-def diagnostic_table_one_seed(log, E, buffer_size, last_k_for_margin, random_seed):
-    n_epochs = log['diag_target_conf'].shape[0] if 'diag_target_conf' in log else None
-    # Note: cgr_with_diag.py saves cgr_confidence_by_sample as the eval-mode target conf,
-    # filled for ALL task-1 epochs when --cgr_diag_log is set. Use it for both
-    # CGR's variance (first E rows) and the per-epoch confidence trajectory.
+def diagnostic_table_one_seed(log, E, buffer_size, random_seed):
     target_conf_all = log['cgr_confidence_by_sample']  # (n_epochs, n_samples)
     n_epochs = target_conf_all.shape[0]
     labels = log['diag_labels'].numpy()
 
-    # Per-sample selection scores (computed over first E epochs, matching CGR's window
-    # and Figure 3 sub-figure b.1)
+    # Per-sample selection scores (first E epochs, matching CGR's window and Figure 3 b.1)
     variance = variance_from_eval_confidence(log, E)
     mean_conf_E = target_conf_all[:E].mean(dim=0).numpy()
     mean_loss_E = log['diag_loss'][:E].mean(dim=0).numpy()
 
-    # Per-sample reporting metrics. Mean target confidence is computed over the
-    # same first-E-epoch window as the selection / as Figure 3 (b.1).
-    margin_late = log['diag_margin'][:last_k_for_margin].mean(dim=0).numpy()
+    # Per-sample reporting metrics.
+    #   margin: averaged over the FIRST E epochs (matches CGR's selection
+    #     window and Figure 3 b.1; consistent with mean target confidence).
+    #     End-of-training margin would be uninformative because the model has
+    #     converged and margins are large for almost all samples.
+    #   forgetting events: over ALL training epochs (Toneva's definition;
+    #     needs the full trajectory — first E would give at most E-1 transitions).
+    #   mean target confidence: over the FIRST E epochs (matches Figure 3 b.1
+    #     and CGR's selection window).
+    margin_first_E = log['diag_margin'][:E].mean(dim=0).numpy()
     forgetting = forgetting_events(log['diag_correct'])
     mean_conf_report = mean_conf_E  # = target_conf_all[:E].mean(dim=0).numpy()
 
@@ -135,23 +137,20 @@ def diagnostic_table_one_seed(log, E, buffer_size, last_k_for_margin, random_see
     row_dict = {}
     for name, idx in rules.items():
         row_dict[name] = {
-            'mean_margin': float(margin_late[idx].mean()),
+            'mean_margin': float(margin_first_E[idx].mean()),
             'mean_forgetting': float(forgetting[idx].mean()),
             'mean_target_conf': float(mean_conf_report[idx].mean()),
         }
     return row_dict, k_per_class, num_classes
 
 
-def diagnostic_table_all_seeds(logs, E, buffer_size, last_k_for_margin):
+def diagnostic_table_all_seeds(logs, E, buffer_size):
     """Compute the diagnostic table per seed, then aggregate to mean ± std."""
     per_seed_rows = []
     k_per_class, num_classes = None, None
     for log in logs:
-        # Use the seed itself as the random_seed for the Random rule, so the
-        # randomness is reproducible and seed-specific.
         row_dict, k, nc = diagnostic_table_one_seed(
             log, E, buffer_size,
-            last_k_for_margin=last_k_for_margin,
             random_seed=int(log['seed']) if str(log['seed']).isdigit() else 0
         )
         per_seed_rows.append(row_dict)
@@ -244,8 +243,6 @@ def main():
                         help='CGR variance window (should match what was used in training).')
     parser.add_argument('--buffer_size', type=int, default=1000,
                         help='Buffer size used in the run; controls per-class top-K.')
-    parser.add_argument('--last_k_for_margin', type=int, default=5,
-                        help='Average margin over the last K training epochs for the report column.')
     args = parser.parse_args()
 
     logs = load_seed_logs(args.diag_dir)
@@ -261,13 +258,9 @@ def main():
     else:
         print("\n(b.1) Cross-seed correlation skipped: need >= 2 seeds.")
 
-    # (a.2) variance vs forgetting -- across all seeds
-    a2_results, a2_mean, a2_std = variance_vs_forgetting_per_seed(logs, args.E)
-    print_a2(a2_results, a2_mean, a2_std)
-
     # (b.2) diagnostic table -- averaged across all seeds
     agg, per_seed_rows, k_per_class, num_classes = diagnostic_table_all_seeds(
-        logs, args.E, args.buffer_size, last_k_for_margin=args.last_k_for_margin
+        logs, args.E, args.buffer_size
     )
     print_b2(agg, per_seed_rows, k_per_class, num_classes, len(logs))
 
