@@ -34,6 +34,10 @@ def add_experiment_args(parser: ArgumentParser) -> None:
     parser.add_argument('--batch_size', type=int,
                         help='Batch size.')
 
+    parser.add_argument('--label_noise', type=float, default=0.0,
+                        help='Symmetric label-noise rate in [0,1]. 0 = no noise.')
+
+
 def add_management_args(parser: ArgumentParser) -> None:
     parser.add_argument('--seed', type=int, default=None,
                         help='The random seed.')
