@@ -317,14 +317,6 @@ class Cgr(ContinualModel):
 
     def observe(self, inputs, labels, not_aug_inputs, index_):
 
-        # === TEMP: check noise actually reaches the model ===
-        if self.task == 1 and self.epoch == 0 and not hasattr(self, '_noise_checked'):
-            print(f"[noise check] First batch labels: {labels[:10].tolist()}")
-            print(f"[noise check] All unique labels seen: {sorted(set(labels.cpu().tolist()))}")
-            self._noise_checked = True
-        # === END TEMP ===
-     
-
         real_batch_size = inputs.shape[0]
 
         batch_x, batch_y = inputs, labels
