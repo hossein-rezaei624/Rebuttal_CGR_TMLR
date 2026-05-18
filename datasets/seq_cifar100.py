@@ -91,6 +91,9 @@ class SequentialCIFAR100(ContinualDataset):
                                   download=True, transform=transform)
         train_dataset.not_aug_transform = test_transform  # store normalized images in the buffer
 
+        assert hasattr(train_dataset, 'targets'), \
+            f"Dataset has no .targets attribute. Attributes: {dir(train_dataset)}"
+      
         # === LABEL NOISE INJECTION (Concern 2 experiment) ===
         if getattr(self.args, 'label_noise', 0.0) > 0:
             from utils.noisy_labels import inject_symmetric_label_noise
