@@ -90,6 +90,21 @@ class SequentialCIFAR100(ContinualDataset):
         train_dataset = MyCIFAR100(base_path() + 'CIFAR100', train=True,
                                   download=True, transform=transform)
         train_dataset.not_aug_transform = test_transform  # store normalized images in the buffer
+
+        # === LABEL NOISE INJECTION (Concern 2 experiment) ===
+        if getattr(self.args, 'label_noise', 0.0) > 0:
+            from utils.noisy_labels import inject_symmetric_label_noise
+            inject_symmetric_label_noise(
+                train_dataset,
+                noise_rate=self.args.label_noise,
+                n_classes_total=100,                          # CIFAR-100
+                n_classes_per_task=self.N_CLASSES_PER_TASK,   # 10
+                within_task=True,
+                seed=self.args.seed,
+            )
+        # === END LABEL NOISE INJECTION ===
+
+      
         if self.args.validation:
             train_dataset, test_dataset = get_train_val(train_dataset,
                                                     test_transform, self.NAME)
