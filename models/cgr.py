@@ -339,7 +339,7 @@ class Cgr(ContinualModel):
             confidence_batch = []
             self.net.eval()
             with torch.no_grad():
-                cgr_logits, _ = self.net.pcrForward(not_aug_inputs)
+                cgr_logits = self.net(not_aug_inputs)
                 soft_ = nn.functional.softmax(cgr_logits, dim=1)
                 # Accumulate confidences
                 for i in range(targets.shape[0]):
@@ -352,7 +352,7 @@ class Cgr(ContinualModel):
     
         
         if self.buffer.is_empty():
-            logits, feas= self.net.pcrForward(batch_x_combine)
+            logits = self.net(batch_x_combine)
             novel_loss = self.loss(logits, batch_y_combine)
             
         else:
@@ -367,7 +367,7 @@ class Cgr(ContinualModel):
             combined_inputs = torch.cat([mem_x_combine, batch_x_combine])
             combined_labels = torch.cat((mem_y_combine, batch_y_combine))
 
-            combined_logits, combined_fea= self.net.pcrForward(combined_inputs)
+            combined_logits = self.net(combined_inputs)
             novel_loss = self.loss(combined_logits, combined_labels)
         
         novel_loss.backward()
