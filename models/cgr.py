@@ -5,7 +5,7 @@ from models.utils.continual_model import ContinualModel
 
 import torch.nn as nn
 import numpy as np
-import matplotlib.pyplot as plt
+##import matplotlib.pyplot as plt
 import torchvision
 
 import torch.nn.functional as F
