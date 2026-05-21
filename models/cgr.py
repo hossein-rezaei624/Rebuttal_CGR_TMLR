@@ -5,16 +5,24 @@ from models.utils.continual_model import ContinualModel
 
 import torch.nn as nn
 import numpy as np
+import matplotlib.pyplot as plt
+import torchvision
+
 import torch.nn.functional as F
+import math
+
+from collections import defaultdict
+import random
 
 
 def get_parser() -> ArgumentParser:
-    parser = ArgumentParser(description='CGR: Confidence-Guided Reply for Buffer-Based Continual Learning')
+    parser = ArgumentParser(description='Continual learning via'
+                                        ' Class-Adaptive Sampling Policy.')
     add_management_args(parser)
     add_experiment_args(parser)
     add_rehearsal_args(parser)
     parser.add_argument('--E', type=int, default=4,
-                        help='Epoch for selecting samples')
+                        help='Epoch for strategies')
     
     return parser
 
@@ -123,7 +131,7 @@ def adjust_values_integer_include_all(a, b):
 
 class Cgr(ContinualModel):
     NAME = 'cgr'
-    COMPATIBILITY = ['class-il', 'task-il']
+    COMPATIBILITY = ['class-il']
 
     def __init__(self, backbone, loss, args, transform):
         super(Cgr, self).__init__(backbone, loss, args, transform)
@@ -184,34 +192,6 @@ class Cgr(ContinualModel):
             # Descending order
             top_indices_sorted = sorted_indices_2[::-1].copy() #challenging
 
-
-            # Initialize lists to hold data
-            all_inputs, all_labels, all_not_aug_inputs, all_indices = [], [], [], []
-            
-            # Collect all data
-            for data_1 in train_loader:
-                inputs_1, labels_1, not_aug_inputs_1, indices_1 = data_1
-                all_inputs.append(inputs_1)
-                all_labels.append(labels_1)
-                all_not_aug_inputs.append(not_aug_inputs_1)
-                all_indices.append(indices_1)
-            
-            # Concatenate all collected items to form complete arrays            
-            all_inputs = torch.cat(all_inputs, dim=0)
-            all_labels = torch.cat(all_labels, dim=0)
-            all_not_aug_inputs = torch.cat(all_not_aug_inputs, dim=0)
-            all_indices = torch.cat(all_indices, dim=0)
-
-            # Convert sorted_indices_2 to a tensor for indexing
-            top_indices_sorted = torch.tensor(top_indices_sorted, dtype=torch.long)
-
-            # Find the positions of these indices in the shuffled order
-            positions = torch.hstack([torch.where(all_indices == index)[0] for index in top_indices_sorted])
-
-            # Extract inputs and labels using these positions
-            all_images = all_not_aug_inputs[positions]
-            all_labels = all_labels[positions]
-
             
             # Convert standard deviation of means by class to item form
             updated_std_of_means_by_class = {self.reverse_mapping[k]: 1 for k, _ in std_of_means_by_class.items()}   #uncomment for balance
@@ -250,22 +230,31 @@ class Cgr(ContinualModel):
                     condition = distribute_excess(condition, check_bound)
                     break
         
-            # Initialize new lists for adjusted images and labels
-            images_list_ = []
-            labels_list_ = []
-        
-            # Iterate over all_labels and select most challening images for each class based on the class variability
-            for i in range(all_labels.shape[0]):
-                if counter_class[self.mapping[all_labels[i].item()]] < condition[self.mapping[all_labels[i].item()]]:
-                    counter_class[self.mapping[all_labels[i].item()]] += 1
-                    labels_list_.append(all_labels[i])
-                    images_list_.append(all_images[i])
-                if counter_class == condition:
-                    break
-        
-            # Stack the selected images and labels
-            all_images_ = torch.stack(images_list_).to(self.device)
-            all_labels_ = torch.stack(labels_list_).to(self.device)
+            # Assuming train_loader is defined and each batch consists of (inputs, labels)
+            class_samples = defaultdict(list)
+            
+            for inputs_1, labels_1, not_aug_inputs_1, indices_1 in train_loader:
+                for input, label in zip(not_aug_inputs_1, labels_1):
+                    class_samples[label.item()].append((input, label))
+
+            desired_samples = condition
+            selected_data = []
+            
+            for label, samples in class_samples.items():
+                n_samples = desired_samples[self.mapping[label]]
+                if len(samples) >= n_samples:
+                    selected_data.extend(random.sample(samples, n_samples))
+                else:
+                    print(f"Not enough samples for class {label}, needed {n_samples}, but got {len(samples)}")
+
+
+            # Extracting images and labels into separate lists
+            images11 = [data[0] for data in selected_data]  # data[0] is the image tensor
+            labels11 = [data[1] for data in selected_data]  # data[1] is the label tensor
+
+            # Convert lists of tensors to single tensors
+            all_images_ = torch.stack(images11, dim=0).to(self.device)  # Stacks along a new dimension
+            all_labels_ = torch.stack(labels11, dim=0).to(self.device)  # Stacks along a new dimension
         
             
             counter_manage = [{k:0 for k, __ in dist_class[i].items()} for i in range(self.task - 1)]
@@ -293,23 +282,32 @@ class Cgr(ContinualModel):
             self.dist_class_prev = dist_class_merged.copy()
             self.dist_class_prev.update(dist_last)
             if not self.buffer.is_empty():
-                # Initialize new lists for adjusted images and labels
-                images_store = []
-                labels_store = []
+                # Assuming train_loader is defined and each batch consists of (inputs, labels)
+                class_samples_buffer = defaultdict(list)
                 
-                # Iterate over all_labels and select most challening images for each class based on the class variability
-                for i in range(len(self.buffer)):
-                    if counter_manage_merged[self.buffer.labels[i].item()] < dist_class_merged[self.buffer.labels[i].item()]:
-                        counter_manage_merged[self.buffer.labels[i].item()] += 1
-                        labels_store.append(self.buffer.labels[i])
-                        images_store.append(self.buffer.examples[i])
-                    if counter_manage_merged == dist_class_merged:
-                        break
+                for input, label in zip(self.buffer.examples, self.buffer.labels):
+                    class_samples_buffer[label.item()].append((input, label))
+    
+                desired_samples_buffer = dist_class_merged
+                selected_data_buffer = []
                 
-                # Stack the selected images and labels
-                images_store_ = torch.stack(images_store).to(self.device)
-                labels_store_ = torch.stack(labels_store).to(self.device)
-                
+                for label, samples in class_samples_buffer.items():
+                    n_samples = desired_samples_buffer[label]
+                    if len(samples) >= n_samples:
+                        selected_data_buffer.extend(random.sample(samples, n_samples))
+                    else:
+                        print(f"Not enough samples for class {label}, needed {n_samples}, but got {len(samples)}")
+    
+    
+                # Extracting images and labels into separate lists
+                images11_buffer = [data[0] for data in selected_data_buffer]  # data[0] is the image tensor
+                labels11_buffer = [data[1] for data in selected_data_buffer]  # data[1] is the label tensor
+    
+                # Convert lists of tensors to single tensors
+                images_store_ = torch.stack(images11_buffer, dim=0).to(self.device)  # Stacks along a new dimension
+                labels_store_ = torch.stack(labels11_buffer, dim=0).to(self.device)  # Stacks along a new dimension
+
+
                 all_images_ = torch.cat((images_store_, all_images_))
                 all_labels_ = torch.cat((labels_store_, all_labels_))
 
@@ -341,7 +339,7 @@ class Cgr(ContinualModel):
             confidence_batch = []
             self.net.eval()
             with torch.no_grad():
-                cgr_logits = self.net(not_aug_inputs)
+                cgr_logits, _ = self.net.pcrForward(not_aug_inputs)
                 soft_ = nn.functional.softmax(cgr_logits, dim=1)
                 # Accumulate confidences
                 for i in range(targets.shape[0]):
@@ -354,7 +352,7 @@ class Cgr(ContinualModel):
     
         
         if self.buffer.is_empty():
-            logits = self.net(batch_x_combine)
+            logits, feas= self.net.pcrForward(batch_x_combine)
             novel_loss = self.loss(logits, batch_y_combine)
             
         else:
@@ -369,7 +367,7 @@ class Cgr(ContinualModel):
             combined_inputs = torch.cat([mem_x_combine, batch_x_combine])
             combined_labels = torch.cat((mem_y_combine, batch_y_combine))
 
-            combined_logits = self.net(combined_inputs)
+            combined_logits, combined_fea= self.net.pcrForward(combined_inputs)
             novel_loss = self.loss(combined_logits, combined_labels)
         
         novel_loss.backward()
