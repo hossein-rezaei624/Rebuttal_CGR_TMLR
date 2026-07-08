@@ -5,24 +5,16 @@ from models.utils.continual_model import ContinualModel
 
 import torch.nn as nn
 import numpy as np
-##import matplotlib.pyplot as plt
-import torchvision
-
 import torch.nn.functional as F
-import math
-
-from collections import defaultdict
-import random
 
 
 def get_parser() -> ArgumentParser:
-    parser = ArgumentParser(description='Continual learning via'
-                                        ' Class-Adaptive Sampling Policy.')
+    parser = ArgumentParser(description='CGR: Confidence-Guided Reply for Buffer-Based Continual Learning')
     add_management_args(parser)
     add_experiment_args(parser)
     add_rehearsal_args(parser)
     parser.add_argument('--E', type=int, default=4,
-                        help='Epoch for strategies')
+                        help='Epoch for selecting samples')
     
     return parser
 
@@ -131,7 +123,7 @@ def adjust_values_integer_include_all(a, b):
 
 class Cgr(ContinualModel):
     NAME = 'cgr'
-    COMPATIBILITY = ['class-il']
+    COMPATIBILITY = ['class-il', 'task-il']
 
     def __init__(self, backbone, loss, args, transform):
         super(Cgr, self).__init__(backbone, loss, args, transform)
@@ -192,6 +184,34 @@ class Cgr(ContinualModel):
             # Descending order
             top_indices_sorted = sorted_indices_2[::-1].copy() #challenging
 
+
+            # Initialize lists to hold data
+            all_inputs, all_labels, all_not_aug_inputs, all_indices = [], [], [], []
+            
+            # Collect all data
+            for data_1 in train_loader:
+                inputs_1, labels_1, not_aug_inputs_1, indices_1 = data_1
+                all_inputs.append(inputs_1)
+                all_labels.append(labels_1)
+                all_not_aug_inputs.append(not_aug_inputs_1)
+                all_indices.append(indices_1)
+            
+            # Concatenate all collected items to form complete arrays            
+            all_inputs = torch.cat(all_inputs, dim=0)
+            all_labels = torch.cat(all_labels, dim=0)
+            all_not_aug_inputs = torch.cat(all_not_aug_inputs, dim=0)
+            all_indices = torch.cat(all_indices, dim=0)
+
+            # Convert sorted_indices_2 to a tensor for indexing
+            top_indices_sorted = torch.tensor(top_indices_sorted, dtype=torch.long)
+
+            # Find the positions of these indices in the shuffled order
+            positions = torch.hstack([torch.where(all_indices == index)[0] for index in top_indices_sorted])
+
+            # Extract inputs and labels using these positions
+            all_images = all_not_aug_inputs[positions]
+            all_labels = all_labels[positions]
+
             
             # Convert standard deviation of means by class to item form
             updated_std_of_means_by_class = {self.reverse_mapping[k]: 1 for k, _ in std_of_means_by_class.items()}   #uncomment for balance
@@ -230,31 +250,22 @@ class Cgr(ContinualModel):
                     condition = distribute_excess(condition, check_bound)
                     break
         
-            # Assuming train_loader is defined and each batch consists of (inputs, labels)
-            class_samples = defaultdict(list)
-            
-            for inputs_1, labels_1, not_aug_inputs_1, indices_1 in train_loader:
-                for input, label in zip(not_aug_inputs_1, labels_1):
-                    class_samples[label.item()].append((input, label))
-
-            desired_samples = condition
-            selected_data = []
-            
-            for label, samples in class_samples.items():
-                n_samples = desired_samples[self.mapping[label]]
-                if len(samples) >= n_samples:
-                    selected_data.extend(random.sample(samples, n_samples))
-                else:
-                    print(f"Not enough samples for class {label}, needed {n_samples}, but got {len(samples)}")
-
-
-            # Extracting images and labels into separate lists
-            images11 = [data[0] for data in selected_data]  # data[0] is the image tensor
-            labels11 = [data[1] for data in selected_data]  # data[1] is the label tensor
-
-            # Convert lists of tensors to single tensors
-            all_images_ = torch.stack(images11, dim=0).to(self.device)  # Stacks along a new dimension
-            all_labels_ = torch.stack(labels11, dim=0).to(self.device)  # Stacks along a new dimension
+            # Initialize new lists for adjusted images and labels
+            images_list_ = []
+            labels_list_ = []
+        
+            # Iterate over all_labels and select most challening images for each class based on the class variability
+            for i in range(all_labels.shape[0]):
+                if counter_class[self.mapping[all_labels[i].item()]] < condition[self.mapping[all_labels[i].item()]]:
+                    counter_class[self.mapping[all_labels[i].item()]] += 1
+                    labels_list_.append(all_labels[i])
+                    images_list_.append(all_images[i])
+                if counter_class == condition:
+                    break
+        
+            # Stack the selected images and labels
+            all_images_ = torch.stack(images_list_).to(self.device)
+            all_labels_ = torch.stack(labels_list_).to(self.device)
         
             
             counter_manage = [{k:0 for k, __ in dist_class[i].items()} for i in range(self.task - 1)]
@@ -282,32 +293,23 @@ class Cgr(ContinualModel):
             self.dist_class_prev = dist_class_merged.copy()
             self.dist_class_prev.update(dist_last)
             if not self.buffer.is_empty():
-                # Assuming train_loader is defined and each batch consists of (inputs, labels)
-                class_samples_buffer = defaultdict(list)
+                # Initialize new lists for adjusted images and labels
+                images_store = []
+                labels_store = []
                 
-                for input, label in zip(self.buffer.examples, self.buffer.labels):
-                    class_samples_buffer[label.item()].append((input, label))
-    
-                desired_samples_buffer = dist_class_merged
-                selected_data_buffer = []
+                # Iterate over all_labels and select most challening images for each class based on the class variability
+                for i in range(len(self.buffer)):
+                    if counter_manage_merged[self.buffer.labels[i].item()] < dist_class_merged[self.buffer.labels[i].item()]:
+                        counter_manage_merged[self.buffer.labels[i].item()] += 1
+                        labels_store.append(self.buffer.labels[i])
+                        images_store.append(self.buffer.examples[i])
+                    if counter_manage_merged == dist_class_merged:
+                        break
                 
-                for label, samples in class_samples_buffer.items():
-                    n_samples = desired_samples_buffer[label]
-                    if len(samples) >= n_samples:
-                        selected_data_buffer.extend(random.sample(samples, n_samples))
-                    else:
-                        print(f"Not enough samples for class {label}, needed {n_samples}, but got {len(samples)}")
-    
-    
-                # Extracting images and labels into separate lists
-                images11_buffer = [data[0] for data in selected_data_buffer]  # data[0] is the image tensor
-                labels11_buffer = [data[1] for data in selected_data_buffer]  # data[1] is the label tensor
-    
-                # Convert lists of tensors to single tensors
-                images_store_ = torch.stack(images11_buffer, dim=0).to(self.device)  # Stacks along a new dimension
-                labels_store_ = torch.stack(labels11_buffer, dim=0).to(self.device)  # Stacks along a new dimension
-
-
+                # Stack the selected images and labels
+                images_store_ = torch.stack(images_store).to(self.device)
+                labels_store_ = torch.stack(labels_store).to(self.device)
+                
                 all_images_ = torch.cat((images_store_, all_images_))
                 all_labels_ = torch.cat((labels_store_, all_labels_))
 
