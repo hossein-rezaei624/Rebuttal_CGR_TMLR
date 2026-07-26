@@ -61,7 +61,9 @@ def get_train_val(train: datasets, test_transform: transforms,
     if os.path.exists(directory + file_name):
         perm = torch.load(directory + file_name)
     else:
-        perm = torch.randperm(dataset_length)
+        g = torch.Generator()
+        g.set_state(torch.get_rng_state())
+        perm = torch.randperm(dataset_length, generator=g)
         torch.save(perm, directory + file_name)
     train.data = train.data[perm]
     train.targets = np.array(train.targets)[perm]
