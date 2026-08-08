@@ -177,9 +177,9 @@ class Cgr(ContinualModel):
             ##sorted_indices_2 = np.argsort(Variability.numpy())
             
         
-            ##top_indices_sorted = sorted_indices_1 #hard
+            top_indices_sorted = sorted_indices_1 #hard
             
-            top_indices_sorted = sorted_indices_1[::-1].copy() #simple
+            ##top_indices_sorted = sorted_indices_1[::-1].copy() #simple
         
             # Descending order
             ##top_indices_sorted = sorted_indices_2[::-1].copy() #challenging
